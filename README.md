@@ -20,32 +20,33 @@ Designed to support **online/offline users**, asynchronous message processing, a
 ---
 
 ## 🏗 Architecture Overview
-
- Client (WebSocket)
-                   |
-                   v
-        WebSocket Server (Node.js)
-                   |
-    +--------------+--------------+
-    |                             |
-    v                             v
+```
+                Client (WebSocket)
+                       |
+                       v
+            WebSocket Server (Node.js)
+                       |
+        +--------------+--------------+
+        |                             |
+        v                             v
 Redis (presence)           Kafka Producer (chat.messages)
-|
-v
-Kafka Consumer
-|
-+-------------+-------------+
-|                           |
-v                           v
-PostgreSQL                  Email Service
-(message storage)           (offline notification)
+                                      |
+                                      v
+                              Kafka Consumer
+                                      |
+                        +-------------+-------------+
+                        |                           |
+                        v                           v
+                  PostgreSQL                  Email Service
+              (message storage)           (offline notification)
+```
 
 ---
 
 ## 🧩 Tech Stack
 
 | Layer | Technology |
-|------|------------|
+|-------|------------|
 | Runtime | Node.js |
 | Real-time | WebSocket (`ws`) |
 | Messaging | Apache Kafka |
@@ -58,18 +59,18 @@ PostgreSQL                  Email Service
 ---
 
 ## 📂 Project Structure
-
+```
 src/
-├── app.js # Express app (REST APIs)
-├── server.js # HTTP + WebSocket server
+├── app.js                 # Express app (REST APIs)
+├── server.js              # HTTP + WebSocket server
 ├── kafka/
-│ ├── chatProducer.js # Kafka producer
-│ └── consumer.js # Kafka consumer
+│   ├── chatProducer.js    # Kafka producer
+│   └── consumer.js        # Kafka consumer
 ├── services/
-│ └── emailService.js # Reusable email sender
-├── utils/ # Helper utilities
+│   └── emailService.js    # Reusable email sender
+├── utils/                 # Helper utilities
 └── ...
-
+```
 
 ---
 
@@ -77,136 +78,162 @@ src/
 
 All WebSocket connections require a **JWT token**.
 
-Connection format:
+**Connection format:**
+```
 ws://localhost:3000?token=<JWT_TOKEN>
+```
 
-Example JWT payload:
+**Example JWT payload:**
 ```json
 {
   "userId": 2,
   "name": "gargi"
 }
 ```
-🔄 Message Flow
-Client sends a message via WebSocket
 
-Server publishes message to Kafka
+---
 
-Kafka consumer:
+## 🔄 Message Flow
 
-Stores message in PostgreSQL
+1. Client sends a message via WebSocket
+2. Server publishes message to Kafka
+3. Kafka consumer:
+   - Stores message in PostgreSQL
+   - Checks Redis for receiver presence
+   - Sends email if receiver is offline
+4. If receiver is online → message delivered instantly
 
-Checks Redis for receiver presence
+---
 
-Sends email if receiver is offline
+## 📬 Offline Email Notifications
 
-If receiver is online → message delivered instantly
+- Emails are sent **only if the receiver is offline**
+- Receiver email is fetched dynamically from the `users` table
+- No hardcoded recipient emails
+- Uses Gmail SMTP via Nodemailer
 
-📬 Offline Email Notifications
-Emails are sent only if the receiver is offline
-
-Receiver email is fetched dynamically from the users table
-
-No hardcoded recipient emails
-
-Uses Gmail SMTP via Nodemailer
-
-Example email:
-
+**Example email:**
+```
 Hi user3,
 
 You have a new message from user2:
-
-"Hello "
+"Hello"
 
 Open the chat to reply.
+```
 
-🗃 Database Schema
-users
+---
+
+## 🗃 Database Schema
+
+**users**
+```
 id | name     | email
 ---+----------+-------------------------
 1  | server   | realtime.chat.notify@gmail.com
 2  | user1    | user1_email@gmail.com
+```
 
-
-messages
+**messages**
+```
 id | sender_id | receiver_id | content | created_at
+```
 
-📡 REST APIs
-Health Check
+---
+
+## 📡 REST APIs
+
+### Health Check
+```http
 GET /health
+```
 
-Fetch Chat History
+### Fetch Chat History
+```http
 GET /messages?user1=1&user2=2&limit=20&offset=0
+```
 
+**Supports:**
+- Pagination (`limit`, `offset`)
+- JWT authentication
 
-Supports:
+---
 
-Pagination (limit, offset)
+## 🐳 Kafka Setup (Docker)
 
-JWT authentication
-
-🐳 Kafka Setup (Docker)
-
-Start Kafka & Zookeeper:
-
+**Start Kafka & Zookeeper:**
+```bash
 docker-compose up -d
+```
 
+**Ports:**
+- Kafka → `localhost:9092`
+- Zookeeper → `localhost:2181`
 
-Ports:
+---
 
-Kafka → localhost:9092
+## 🚀 Running the Project
 
-Zookeeper → localhost:2181
-
-🚀 Running the Project
-1️⃣ Install dependencies
+### 1️⃣ Install dependencies
+```bash
 npm install
+```
 
-2️⃣ Start Redis
+### 2️⃣ Start Redis
+```bash
 redis-server
+```
 
-3️⃣ Start PostgreSQL
+### 3️⃣ Start PostgreSQL
+```bash
 docker start postgres
+```
 
-4️⃣ Run Kafka consumer
+### 4️⃣ Run Kafka consumer
+```bash
 node src/kafka/consumer.js
+```
 
-5️⃣ Run server
+### 5️⃣ Run server
+```bash
 npm run dev
+```
 
-🔒 Environment Variables
+---
+
+## 🔒 Environment Variables
+```env
 JWT_SECRET=supersecretkey
 EMAIL_USER=realtime.chat.notify@gmail.com
 EMAIL_PASS=your_app_password
+```
 
+⚠️ `.env` is gitignored and should never be committed.
 
-⚠️ .env is gitignored and should never be committed.
+---
 
-📈 Scalability Notes
+## 📈 Scalability Notes
 
-Kafka consumer groups enable horizontal scaling
+- Kafka consumer groups enable horizontal scaling
+- Redis TTL ensures automatic offline detection
+- Stateless WebSocket server design
+- Easily extendable to push notifications & mobile apps
 
-Redis TTL ensures automatic offline detection
+---
 
-Stateless WebSocket server design
+## 🎯 Future Enhancements
 
-Easily extendable to push notifications & mobile apps
+- Message delivery acknowledgements
+- Read receipts
+- Typing indicators
+- Push notifications (FCM / APNs)
+- User authentication APIs
+- Monitoring & rate limiting
 
-🎯 Future Enhancements
+---
 
-Message delivery acknowledgements
+## 👩‍💻 Author
 
-Read receipts
+**Gargi Jain**
 
-Typing indicators
-
-Push notifications (FCM / APNs)
-
-User authentication APIs
-
-Monitoring & rate limiting
-
-👩‍💻 Author
-
-Gargi Jain
+---
