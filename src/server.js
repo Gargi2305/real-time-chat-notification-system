@@ -83,10 +83,12 @@ wss.on("connection", async (ws, req) => {
 
   // 4. Listen for messages// Triggered when a client sends a message
   ws.on("message", async (message) => {
+    const parsed = JSON.parse(message.toString());
+
     const chatEvent = {
       from: ws.user.userId,
-      to: 2, // TEMPORARY receiver (hardcoded for now)
-      text: message.toString(),
+      to: parsed.to,
+      text: parsed.text,
       timestamp: Date.now(),
     };
 
@@ -95,14 +97,14 @@ wss.on("connection", async (ws, req) => {
     console.log("📤 Message published to Kafka");
 
     // 2. Temporary delivery logic (existing)
-    const receiverUserId = 2; // still hardcoded for now
+    const receiverUserId = chatEvent.to; // use the actual receiver ID from the chat event
     const isOnline = await redisClient.get(`user:${receiverUserId}:online`);
 
     if (isOnline) {
       const receiverSocket = userSockets.get(receiverUserId);
       if (receiverSocket) {
         receiverSocket.send(
-          `📨 Message from user ${ws.user.userId}: ${message}`,
+          `📨 Message from user ${ws.user.userId}: ${parsed.text}`,
         );
       }
     }
