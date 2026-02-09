@@ -21,22 +21,24 @@ Designed to support **online/offline users**, asynchronous message processing, a
 
 ## 🏗 Architecture Overview
 
-Client (WebSocket)
-|
-v
-WebSocket Server (Node.js)
-|
-|--> Redis (online/offline presence)
-|--> Kafka Producer (chat.messages topic)
+ Client (WebSocket)
+                   |
+                   v
+        WebSocket Server (Node.js)
+                   |
+    +--------------+--------------+
+    |                             |
+    v                             v
+Redis (presence)           Kafka Producer (chat.messages)
 |
 v
 Kafka Consumer
 |
-+-----------+-----------+
-| |
-PostgreSQL Email Service
-(message storage) (offline notification)
-
++-------------+-------------+
+|                           |
+v                           v
+PostgreSQL                  Email Service
+(message storage)           (offline notification)
 
 ---
 
