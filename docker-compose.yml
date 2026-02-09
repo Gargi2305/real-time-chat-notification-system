@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0 ## Use the Confluent Zookeeper image
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181 ##Zookeeper listens on port 2181 inside the container, kafka need it, server doesnt use it
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka: ##defines kafka brokers
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    depends_on: ##start zookeeper before kafka
+      - zookeeper
+    ports:
+      - "9092:9092" ##port 9092 is main kafka port, used for client communication, we map it to host's 9092
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181 ##Kafka, connect to the Zookeeper service named zookeeper on port 2181
+
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092 ##Kafka listens on all interfaces on port 9092 inside the container, this is for internal communication within the docker network
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092 ##When a client connects, tell them to use localhost:9092
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1 ##Since we have only one broker, we set replication factor to 1 , Kafka stores metadata in internal topics. The offsets topic is one of them, it keeps track of consumer group offsets. in production it is = 3 but here we only have one broker so =1
+
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: chatuser
+      POSTGRES_PASSWORD: chatpassword
+      POSTGRES_DB: chatdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+
+##Creates a Postgres container
+##Persists data via volume
+##Exposes port 5432 to your machine
