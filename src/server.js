@@ -1,129 +1,184 @@
+const cors = require("cors");
 require("dotenv").config();
 
-const { sendChatMessage } = require("./kafka/chatProducer"); //importing kafka function
+const { sendChatMessage } = require("./kafka/chatProducer");
+const { sendEmailNotification } = require("./services/emailService");
 
-const http = require("http"); //Node’s built-in HTTP module.
-//Express sits on top of HTTP and WebSockets hook into HTTP during upgrade
-
+const http = require("http");
 const WebSocket = require("ws");
-//Handles WS protocol and Emits connection, message, close
-const jwt = require("jsonwebtoken"); //For verifying JWT tokens sent by clients during WS connection
-
-const { createClient } = require("redis"); //import redis client
+const jwt = require("jsonwebtoken");
+const { createClient } = require("redis");
 
 const app = require("./app");
 
 const PORT = process.env.PORT || 3000;
 
-const redisClient = createClient(); //creates a new redis client instance
+const redisClient = createClient();
 
 // In-memory map: userId -> WebSocket
 const userSockets = new Map();
 
 redisClient.on("error", (err) => {
-  console.error("❌ Redis Client Error", err); //logs Redis issues (.on("error"))
+  console.error("❌ Redis Client Error", err);
 });
 
-redisClient
-  .connect() //connects to the Redis server (.connect)
-  .then(() => {
-    console.log("✅ Connected to Redis");
-  });
+redisClient.connect().then(() => {
+  console.log("✅ Connected to Redis");
+});
 
-// 1. Create HTTP server from Express app
+// Create HTTP server
 const server = http.createServer(app);
-//Creates a real HTTP server and Uses your Express app to handle HTTP routes
 
-// 2. Attach WebSocket server to the HTTP server
+// Attach WebSocket
 const wss = new WebSocket.Server({ server });
 
-// 3. Listen for WebSocket connections // Triggered when a client connects
+// WebSocket connection
 wss.on("connection", async (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const token = url.searchParams.get("token"); //extracts token from URL by client
+  const token = url.searchParams.get("token");
 
-  //if token is missing or invalid, close the connection
   if (!token) {
-    console.log("❌ No token provided. Closing connection.");
+    console.log("❌ No token provided");
     ws.close();
     return;
   }
-
-  // Verify the token
 
   let payload;
 
   try {
     payload = jwt.verify(token, process.env.JWT_SECRET);
   } catch (err) {
-    console.log("❌ Invalid token. Closing connection.");
+    console.log("❌ Invalid token");
     ws.close();
     return;
   }
 
-  console.log("✅ JWT verified. Payload:", payload);
+  console.log("✅ JWT verified:", payload);
+
   ws.user = payload;
+  userSockets.set(ws.user.userId, ws);
 
-  userSockets.set(ws.user.userId, ws); // store the WebSocket connection in the map with userId as key
+  await redisClient.set(`user:${ws.user.userId}:online`, "1", { EX: 30 });
+  console.log(`🟢 User ${ws.user.userId} online`);
 
-  await redisClient.set(`user:${ws.user.userId}:online`, "1", { EX: 30 }); // we used async on wss.on to use await here
-  console.log(`🟢 User ${ws.user.userId} marked online`);
+  console.log("✅ WebSocket connected");
 
-  //end verification, proceed with connection
-
-  console.log("✅ WebSocket client connected");
-
-  // Heartbeat: refresh presence TTL every 10 seconds
+  // Heartbeat
   ws.heartbeat = setInterval(async () => {
     await redisClient.set(`user:${ws.user.userId}:online`, "1", { EX: 30 });
-    // console.log(`💓 Heartbeat refreshed for user ${ws.user.userId}`);
-  }, 10_000);
+  }, 10000);
 
-  //heartbeat done
-
-  // 4. Listen for messages// Triggered when a client sends a message
+  // MESSAGE HANDLER
+  // MESSAGE HANDLER
   ws.on("message", async (message) => {
-    const parsed = JSON.parse(message.toString());
+    try {
+      const parsed = JSON.parse(message.toString());
 
-    const chatEvent = {
-      from: ws.user.userId,
-      to: parsed.to,
-      text: parsed.text,
-      timestamp: Date.now(),
-    };
+      // 🔍 Convert email → userId
+      const result = await app.locals.pgPool.query(
+        "SELECT id FROM users WHERE email = $1",
+        [parsed.to],
+      );
 
-    // 1. Publish to Kafka (always)
-    await sendChatMessage(chatEvent);
-    console.log("📤 Message published to Kafka");
+      if (result.rows.length === 0) {
+        ws.send(JSON.stringify({ type: "error", message: "User not found" }));
+        return;
+      }
 
-    // 2. Temporary delivery logic (existing)
-    const receiverUserId = chatEvent.to; // use the actual receiver ID from the chat event
-    const isOnline = await redisClient.get(`user:${receiverUserId}:online`);
+      const receiverUserId = result.rows[0].id;
 
-    if (isOnline) {
+      const chatEvent = {
+        from: ws.user.userId,
+        to: receiverUserId,
+        text: parsed.text,
+        timestamp: Date.now(),
+      };
+
+      // 🔥 Kafka
+      try {
+        await sendChatMessage(chatEvent);
+        console.log("📤 Message published to Kafka");
+      } catch (err) {
+        console.error("❌ Kafka failed:", err.message);
+      }
+
+      // ✅ Save to DB
+      // await app.locals.pgPool.query(
+      //   `INSERT INTO messages (sender_id, receiver_id, content)
+      //  VALUES ($1, $2, $3)`,
+      //   [ws.user.userId, receiverUserId, parsed.text],
+      // );
+
+      // 🔍 Get receiver socket
       const receiverSocket = userSockets.get(receiverUserId);
+
+      // 🔍 Get sender name
+      const senderResult = await app.locals.pgPool.query(
+        "SELECT name FROM users WHERE id = $1",
+        [ws.user.userId],
+      );
+
+      const senderName = senderResult.rows[0]?.name || "Unknown";
+
+      // ✅ ALWAYS send back to sender
+      ws.send(
+        JSON.stringify({
+          type: "message",
+          from: ws.user.userId,
+          senderName,
+          text: parsed.text,
+          timestamp: Date.now(),
+        }),
+      );
+
+      // ✅ IF receiver online → send
       if (receiverSocket) {
         receiverSocket.send(
-          `📨 Message from user ${ws.user.userId}: ${parsed.text}`,
+          JSON.stringify({
+            type: "message",
+            from: ws.user.userId,
+            senderName,
+            text: parsed.text,
+            timestamp: Date.now(),
+          }),
         );
-      }
-    }
+      } else {
+        // 📧 Email fallback
+        console.log("📴 User offline → sending email");
 
-    // 3. Echo back to sender
-    ws.send(`Echo: ${message}`);
+        const receiverResult = await app.locals.pgPool.query(
+          "SELECT email FROM users WHERE id = $1",
+          [receiverUserId],
+        );
+
+        const receiverEmail = receiverResult.rows[0]?.email;
+
+        if (receiverEmail) {
+          try {
+            await sendEmailNotification(receiverEmail, senderName, parsed.text);
+            console.log("📧 Email sent successfully");
+          } catch (err) {
+            console.error("❌ Email failed:", err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("❌ Message handler error:", err);
+    }
   });
 
-  // 5. Handle disconnect // Triggered when a client disconnects
+  // DISCONNECT
   ws.on("close", async () => {
-    // await redisClient.del(`user:${ws.user.userId}:online`); ealier code for// mark user offline on disconnect
-    clearInterval(ws.heartbeat); // stop heartbeats
-    userSockets.delete(ws.user.userId); // remove from map
-    await redisClient.del(`user:${ws.user.userId}:online`); // this is code with TTL of 30s to mark user offline after 30s of disconnection instead of running forever like above code did
-    console.log(`🔴 User ${ws.user.userId} marked offline`);
+    clearInterval(ws.heartbeat);
+    userSockets.delete(ws.user.userId);
+
+    await redisClient.del(`user:${ws.user.userId}:online`);
+
+    console.log(`🔴 User ${ws.user.userId} offline`);
   });
 });
 
-// 6. Start the server
+// START SERVER
 server.listen(PORT, () => {
-  console.log(`HTTP + WS server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });

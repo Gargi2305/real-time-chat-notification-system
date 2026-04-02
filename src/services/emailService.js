@@ -1,29 +1,25 @@
 require("dotenv").config();
 const nodemailer = require("nodemailer");
 
-// create transporter ONCE
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: process.env.EMAIL_USER, // ✅ sender account
+    user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
 });
 
-// reusable email function
-async function sendEmail({ to, subject, text }) {
-  const info = await transporter.sendMail({
-    from: process.env.EMAIL_USER, // ✅ sender
-    to, // ✅ receiver
-    subject,
-    text,
+async function sendEmailNotification(to, fromName, message) {
+  await transporter.sendMail({
+    from: `"Chat App" <${process.env.EMAIL_USER}>`,
+    to,
+    subject: `New message from ${fromName}`,
+    text: `${fromName} sent you: ${message}`,
   });
 
-  console.log("📧 Email sent:", info.messageId);
+  console.log("📧 Email sent to", to);
 }
 
-module.exports = {
-  sendEmail,
-};
+module.exports = { sendEmailNotification };
 
 // This file is for testing email sending functionality. We will call sendTestEmail from server.js when a message is received, to test if email notifications work.

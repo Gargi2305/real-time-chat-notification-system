@@ -1,0 +1,272 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Chat</title>
+
+    <style>
+      body {
+        margin: 0;
+        font-family: "Poppins", sans-serif;
+        background-color: #c4d9f5;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+      }
+
+      .chat-container {
+        width: 400px;
+        height: 550px;
+        background: #ffd6e8;
+        border-radius: 20px;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+
+      .header {
+        padding: 15px;
+        font-weight: bold;
+        text-align: center;
+        background: #ffb6d9;
+      }
+
+      #chat-box {
+        flex: 1;
+        padding: 15px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        background: #fff;
+      }
+
+      .message {
+        max-width: 70%;
+        padding: 10px 12px;
+        border-radius: 15px;
+        font-size: 14px;
+        word-wrap: break-word;
+      }
+
+      .sent {
+        align-self: flex-end;
+        background: #2563eb;
+        color: white;
+        border-bottom-right-radius: 5px;
+      }
+
+      .received {
+        align-self: flex-start;
+        background: #e5e5ea;
+        color: black;
+        border-bottom-left-radius: 5px;
+      }
+
+      .meta {
+        font-size: 11px;
+        opacity: 0.6;
+        margin-bottom: 3px;
+      }
+
+      .input-area {
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        background: #ffe4f0;
+      }
+
+      textarea {
+        height: 70px;
+        border-radius: 12px;
+        border: none;
+        padding: 10px;
+        resize: none;
+        outline: none;
+      }
+
+      input {
+        height: 35px;
+        border-radius: 12px;
+        border: none;
+        padding: 8px;
+        outline: none;
+      }
+
+      button {
+        height: 40px;
+        border-radius: 12px;
+        border: none;
+        background: #2563eb;
+        color: white;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #1e4ed8;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="chat-container">
+      <div class="header">💬 Chat</div>
+
+      <div id="chat-box"></div>
+
+      <div class="input-area">
+        <textarea id="message" placeholder="Type your message..."></textarea>
+        <input id="to" placeholder="Send to (email)" />
+        <button onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
+    <script>
+      let socket;
+
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        alert("Please login first");
+        window.location.href = "login.html";
+      }
+
+      function getUserIdFromToken(token) {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        return Number(payload.userId);
+      }
+
+      const myUserId = getUserIdFromToken(token);
+      console.log("🧠 My User ID:", myUserId);
+
+      socket = new WebSocket(`ws://localhost:3000?token=${token}`);
+
+      socket.onopen = () => {
+        console.log("✅ Connected");
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type !== "message") return;
+
+          const chatBox = document.getElementById("chat-box");
+
+          const senderId = Number(data.from);
+          const isMine = senderId === myUserId;
+
+          console.log("📩 Incoming:", data);
+          console.log(
+            "👉 senderId:",
+            senderId,
+            "myUserId:",
+            myUserId,
+            "isMine:",
+            isMine,
+          );
+
+          const div = document.createElement("div");
+          div.classList.add("message", isMine ? "sent" : "received");
+
+          const time = new Date(data.timestamp).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+
+          div.innerHTML = `
+            <div class="meta">
+              ${isMine ? "You" : data.senderName} • ${time}
+            </div>
+            <div>${data.text}</div>
+          `;
+
+          chatBox.appendChild(div);
+          chatBox.scrollTop = chatBox.scrollHeight;
+        } catch (err) {
+          console.error("❌ Invalid message:", event.data);
+        }
+      };
+
+      socket.onclose = () => {
+        console.log("❌ Disconnected");
+      };
+
+      function sendMessage() {
+        const text = document.getElementById("message").value.trim();
+        const to = document.getElementById("to").value.trim();
+
+        if (!text || !to) {
+          alert("Enter message and receiver");
+          return;
+        }
+
+        if (socket.readyState !== WebSocket.OPEN) {
+          alert("Connection lost. Refresh page.");
+          return;
+        }
+
+        socket.send(JSON.stringify({ to, text }));
+
+        document.getElementById("message").value = "";
+      }
+
+      document.getElementById("message").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+      async function loadMessages() {
+        const to = document.getElementById("to").value.trim();
+        if (!to) return;
+
+        const token = localStorage.getItem("token");
+
+        const myUserId = JSON.parse(atob(token.split(".")[1])).userId;
+
+        const res = await fetch(
+          `http://localhost:3000/messages?user1=${myUserId}&user2=${to}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        const messages = await res.json();
+
+        console.log("📜 Loaded messages:", messages);
+
+        const chatBox = document.getElementById("chat-box");
+        chatBox.innerHTML = "";
+
+        messages.forEach((msg) => {
+          const isMine = Number(msg.sender_id) === Number(myUserId);
+
+          const div = document.createElement("div");
+          div.classList.add("message", isMine ? "sent" : "received");
+
+          const time = new Date(msg.created_at).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+
+          div.innerHTML = `
+      <div class="meta">
+        ${isMine ? "You" : "User"} • ${time}
+      </div>
+      <div>${msg.content}</div>
+    `;
+
+          chatBox.appendChild(div);
+        });
+
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+      document.getElementById("to").addEventListener("change", loadMessages);
+    </script>
+  </body>
+</html>
