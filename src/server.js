@@ -7,24 +7,44 @@ const { sendEmailNotification } = require("./services/emailService");
 const http = require("http");
 const WebSocket = require("ws");
 const jwt = require("jsonwebtoken");
-const { createClient } = require("redis");
+//const { createClient } = require("redis"); -- for deployment
 
 const app = require("./app");
 
 const PORT = process.env.PORT || 3000;
 
-const redisClient = createClient();
+//const redisClient = createClient(); -- for deployment
 
 // In-memory map: userId -> WebSocket
 const userSockets = new Map();
 
-redisClient.on("error", (err) => {
-  console.error("❌ Redis Client Error", err);
-});
+// -- for deployment //  redisClient.on("error", (err) => {
+//   console.error("❌ Redis Client Error", err);
+// });
 
-redisClient.connect().then(() => {
-  console.log("✅ Connected to Redis");
-});
+// redisClient.connect().then(() => {
+//   console.log("✅ Connected to Redis");
+// });  -- for deployment
+
+//new code for deployment without redis
+
+const { createClient } = require("redis");
+
+let redisClient = null;
+
+if (process.env.NODE_ENV !== "production") {
+  redisClient = createClient();
+
+  redisClient.on("error", (err) => {
+    console.error("❌ Redis Client Error", err);
+  });
+
+  redisClient.connect().then(() => {
+    console.log("✅ Connected to Redis");
+  });
+} else {
+  console.log("⚠️ Redis disabled in production");
+}
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -58,14 +78,24 @@ wss.on("connection", async (ws, req) => {
   ws.user = payload;
   userSockets.set(ws.user.userId, ws);
 
-  await redisClient.set(`user:${ws.user.userId}:online`, "1", { EX: 30 });
-  console.log(`🟢 User ${ws.user.userId} online`);
+  // await redisClient.set(`user:${ws.user.userId}:online`, "1", { EX: 30 }); -- for deployment
+  if (redisClient) {
+    await redisClient.set(`user:${ws.user.userId}:online`, "1", { EX: 30 });
+  }
+  // console.log(`🟢 User ${ws.user.userId} online`); -- for deployment
+  if (redisClient) {
+    console.log(`🟢 User ${ws.user.userId} online`);
+  }
 
   console.log("✅ WebSocket connected");
 
   // Heartbeat
   ws.heartbeat = setInterval(async () => {
-    await redisClient.set(`user:${ws.user.userId}:online`, "1", { EX: 30 });
+    // await redisClient.set(`user:${ws.user.userId}:online`, "1", { EX: 30 }); -- for deployment
+
+    if (redisClient) {
+      await redisClient.set(`user:${ws.user.userId}:online`, "1", { EX: 30 });
+    }
   }, 10000);
 
   // MESSAGE HANDLER
@@ -172,7 +202,10 @@ wss.on("connection", async (ws, req) => {
     clearInterval(ws.heartbeat);
     userSockets.delete(ws.user.userId);
 
-    await redisClient.del(`user:${ws.user.userId}:online`);
+    // await redisClient.del(`user:${ws.user.userId}:online`); -- for deployment
+    if (redisClient) {
+      await redisClient.del(`user:${ws.user.userId}:online`);
+    }
 
     console.log(`🔴 User ${ws.user.userId} offline`);
   });
